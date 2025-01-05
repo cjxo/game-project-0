@@ -30,10 +30,10 @@ SamplerState                          g_sampler                  : register(s0);
 
 static float3 g_quad_vertices[] =
 {
-  float3(-0.5f, -0.5f, 0.0f),
-  float3(-0.5f, +0.5f, 0.0f),
-  float3(+0.5f, -0.5f, 0.0f),
-  float3(+0.5f, +0.5f, 0.0f),
+  float3(+0.0f, +0.0f, 0.0f),
+  float3(+0.0f, +1.0f, 0.0f),
+  float3(+1.0f, +0.0f, 0.0f),
+  float3(+1.0f, +1.0f, 0.0f),
 };
 
 VertexShader_Output

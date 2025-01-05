@@ -15,6 +15,7 @@
 #include "my_math.h"
 #include "game.h"
 
+#include "base.c"
 #include "my_math.c"
 #include "game.c"
 
@@ -36,10 +37,11 @@ static ID3D11Texture2D                  *g_dx11_back_buffer_tex;
 static ID3D11RenderTargetView           *g_dx11_back_buffer_rtv;
 static ID3D11BlendState                 *g_dx11_blend_state;
 static ID3D11RasterizerState            *g_dx11_rasterizer_fill_nocull_ccw;
+static ID3D11RasterizerState            *g_dx11_rasterizer_wire_nocull_ccw;
 static ID3D11SamplerState               *g_dx11_point_sampler_all;
 static ID3D11Texture2D                  *g_dx11_main_depth_stencil_tex;
 static ID3D11DepthStencilView           *g_dx11_main_depth_stencil_dsv;
-static ID3D11DepthStencilState          *g_dx11_depth_less_stencil_nope;
+static ID3D11DepthStencilState          *g_dx11_depth_less_equal_stencil_nope;
 
 static IDXGISwapChain1           *g_dxgi_swap_chain;
 
@@ -111,6 +113,29 @@ w32_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
     case WM_DESTROY:
     {
       PostQuitMessage(0);
+    } break;
+    
+    case WM_LBUTTONDOWN:
+    {
+      g_game_input.button[Input_ButtonType_Left] |= Input_InteractFlag_Pressed | Input_InteractFlag_Held;
+    } break;
+    
+    case WM_LBUTTONUP:
+    {
+      g_game_input.button[Input_ButtonType_Left] |= Input_InteractFlag_Released;
+      g_game_input.button[Input_ButtonType_Left] &= ~Input_InteractFlag_Held;
+    } break;
+    
+        
+    case WM_RBUTTONDOWN:
+    {
+      g_game_input.button[Input_ButtonType_Right] |= Input_InteractFlag_Pressed | Input_InteractFlag_Held;
+    } break;
+    
+    case WM_RBUTTONUP:
+    {
+      g_game_input.button[Input_ButtonType_Right] |= Input_InteractFlag_Released;
+      g_game_input.button[Input_ButtonType_Right] &= ~Input_InteractFlag_Held;
     } break;
     
     default:
@@ -253,7 +278,7 @@ dx11_create_states(void)
   raster_desc.DepthBias                    = 0;
   raster_desc.DepthBiasClamp               = 0.0f;
   raster_desc.SlopeScaledDepthBias         = 0.0f;
-  raster_desc.DepthClipEnable              = FALSE;
+  raster_desc.DepthClipEnable              = TRUE;
   raster_desc.ScissorEnable                = FALSE;
   raster_desc.MultisampleEnable            = FALSE;
   raster_desc.AntialiasedLineEnable        = FALSE;
@@ -292,11 +317,15 @@ dx11_create_states(void)
   
   if (SUCCEEDED(ID3D11Device1_CreateRasterizerState(g_dx11_dev, &raster_desc, &g_dx11_rasterizer_fill_nocull_ccw)))
   {
-    if (SUCCEEDED(ID3D11Device_CreateBlendState(g_dx11_dev, &blend_desc, &g_dx11_blend_state)))
+    raster_desc.FillMode                     = D3D11_FILL_WIREFRAME;
+    if (SUCCEEDED(ID3D11Device1_CreateRasterizerState(g_dx11_dev, &raster_desc, &g_dx11_rasterizer_wire_nocull_ccw)))
     {
-      if (SUCCEEDED(ID3D11Device1_CreateSamplerState(g_dx11_dev, &sam_desc, &g_dx11_point_sampler_all)))
+      if (SUCCEEDED(ID3D11Device_CreateBlendState(g_dx11_dev, &blend_desc, &g_dx11_blend_state)))
       {
-        success = true;
+        if (SUCCEEDED(ID3D11Device1_CreateSamplerState(g_dx11_dev, &sam_desc, &g_dx11_point_sampler_all)))
+        {
+          success = true;
+        }
       }
     }
   }
@@ -317,13 +346,13 @@ dx11_create_depth_stencils(void)
   {
     .DepthEnable           = TRUE,
     .DepthWriteMask        = D3D11_DEPTH_WRITE_MASK_ALL,
-    .DepthFunc             = D3D11_COMPARISON_LESS,
+    .DepthFunc             = D3D11_COMPARISON_LESS_EQUAL,
     .StencilEnable         = FALSE,
     .StencilReadMask       = D3D11_DEFAULT_STENCIL_READ_MASK,
     .StencilWriteMask      = D3D11_DEFAULT_STENCIL_WRITE_MASK,
   };
   
-  if (SUCCEEDED(ID3D11Device1_CreateDepthStencilState(g_dx11_dev, &depth_stencil_desc, &g_dx11_depth_less_stencil_nope)))
+  if (SUCCEEDED(ID3D11Device1_CreateDepthStencilState(g_dx11_dev, &depth_stencil_desc, &g_dx11_depth_less_equal_stencil_nope)))
   {
     D3D11_TEXTURE2D_DESC tex_desc =
     {
@@ -423,9 +452,11 @@ dx11_create_game_shaders(void)
               .ViewDimension    = D3D11_SRV_DIMENSION_BUFFER,
               .Buffer           = { .NumElements = Game_MaxQuadInstances }
             };
-            AssertHR(ID3D11Device1_CreateShaderResourceView(g_dx11_dev, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 
-                                                            &sbuffer_srv_desc, &g_dx11_game_quad_sbuffer0_srv));
-            success = true;
+            if (SUCCEEDED(ID3D11Device1_CreateShaderResourceView(g_dx11_dev, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 
+                                                                 &sbuffer_srv_desc, &g_dx11_game_quad_sbuffer0_srv)))
+            {
+              success = true;
+            }
           }
         }
       }
@@ -462,7 +493,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     .lpszClassName   = "Game Project",
   };
 
-  g_w32_window;
   g_w32_window_width   = 1280;
   g_w32_window_height  = 720;
   if (RegisterClassA(&wnd_class))
@@ -490,6 +520,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
       dx11_create_game_shaders();
       
       Game_State game_state = {0};
+      game_init(&game_state);
       
       b32 is_running = true;
       TIMECAPS tc;
@@ -500,6 +531,12 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
       EnumDisplaySettingsA(0, ENUM_CURRENT_SETTINGS, &devmode);
       f32 seconds_per_frame   = 1.0f / (f32)devmode.dmDisplayFrequency;
       f32 game_update_secs    = 1.0f / (f32)devmode.dmDisplayFrequency;
+
+      LARGE_INTEGER perf_freq;
+      QueryPerformanceFrequency(&perf_freq);
+      
+      LARGE_INTEGER perf_count_begin;
+      QueryPerformanceCounter(&perf_count_begin);
       
       while (is_running)
       {
@@ -549,6 +586,19 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
           }
         } 
         
+        {
+          g_game_input.prev_mouse_x = g_game_input.mouse_x;
+          g_game_input.prev_mouse_y = g_game_input.mouse_y;
+          
+          POINT cursor_p;
+          GetCursorPos(&cursor_p);
+          
+          ScreenToClient(g_w32_window, &cursor_p);
+          
+          g_game_input.mouse_x = cursor_p.x;
+          g_game_input.mouse_y = cursor_p.y;
+        }
+        
         if (g_game_input.key[Input_KeyType_Escape] & Input_InteractFlag_Released)
         {
           is_running = false;
@@ -576,7 +626,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
           ID3D11DeviceContext_Map(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_cbuffer0, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subresource);
           DX11_Game_CBuffer0 new_cbuf0 =
           {
-            .proj = m44_make_ortho_z01(-viewport.Width * 0.5f, viewport.Width * 0.5f, viewport.Height * 0.5f, -viewport.Height * 0.5f, 0.0f, 1.0f),
+            .proj = m44_make_ortho_z01(-viewport.Width * 0.5f, viewport.Width * 0.5f, viewport.Height * 0.5f, -viewport.Height * 0.5f, 0.0f, 50.0f),
           };
           
           CopyMemory(mapped_subresource.pData, &new_cbuf0, sizeof(new_cbuf0));
@@ -618,7 +668,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         
         {
           ID3D11DeviceContext_OMSetBlendState(g_dx11_dev_cont, g_dx11_blend_state, 0, 0xFFFFFFFF);
-          ID3D11DeviceContext_OMSetRenderTargets(g_dx11_dev_cont, 1, &g_dx11_back_buffer_rtv, 0);
+          ID3D11DeviceContext_OMSetRenderTargets(g_dx11_dev_cont, 1, &g_dx11_back_buffer_rtv, g_dx11_main_depth_stencil_dsv);
+          ID3D11DeviceContext_OMSetDepthStencilState(g_dx11_dev_cont, g_dx11_depth_less_equal_stencil_nope, 0);
         }
         
         {
@@ -629,6 +680,19 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         IDXGISwapChain1_Present(g_dxgi_swap_chain, 1, 0);
         
         game_state.game_quad_instance_count = 0;
+        
+        LARGE_INTEGER perf_count_end;
+        QueryPerformanceCounter(&perf_count_end);
+        
+        f32 seconds_of_work = (f32)(perf_count_end.QuadPart - perf_count_begin.QuadPart) / (f32)perf_freq.QuadPart;
+        if (seconds_of_work < seconds_per_frame)
+        {
+          Sleep((u32)((seconds_per_frame - seconds_of_work) * 1000.0f));
+        }
+        else
+        {
+          //missed frame
+        }
       }
     }
   }

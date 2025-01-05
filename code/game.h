@@ -36,10 +36,14 @@ enum
   Input_InteractFlag_Held = 0x4,
 };
 
+#define Game_KeyPressed(inp,keytype) ((inp)->key[keytype]&Input_InteractFlag_Pressed)
+#define Game_KeyReleased(inp,keytype) ((inp)->key[keytype]&Input_InteractFlag_Released)
+#define Game_KeyHeld(inp,keytype) ((inp)->key[keytype]&Input_InteractFlag_Held)
 typedef struct
 {
   Input_InteractFlag key[Input_KeyType_Count];
   Input_InteractFlag button[Input_ButtonType_Count];
+  s32 mouse_x, mouse_y, prev_mouse_x, prev_mouse_y;
 } Game_Input;
 
 //
@@ -53,12 +57,53 @@ typedef struct
   v4f colour;
 } Game_QuadInstance;
 
+typedef u16 Game_InteractFlag;
+enum
+{
+  Game_InteractFlag_Interactable = 0x1,
+  Game_InteractFlag_Collidable = 0x2,
+};
+
+typedef u16 Game_StructureType;
+enum
+{
+  Game_StructureType_Grass_Flat,
+  
+  Game_StructureType_Grass_Blade,
+  Game_StructureType_Tree_Fir,
+  Game_StructureType_Rock,
+  Game_StructureType_Count,
+};
+
+typedef u16 Game_ChunkLayer;
+enum
+{
+  Game_ChunkLayer_NonInteractable,
+  Game_ChunkLayer_Interactable,
+  Game_ChunkLayer_Count,
+};
+
+typedef struct
+{
+  Game_StructureType type;
+  Game_InteractFlag flags;
+} Game_Structure;
+
+#define Game_BlockDimPixels 48
+#define Game_ChunkDim 8
 typedef struct
 {
   Game_QuadInstance game_quad_instances[Game_MaxQuadInstances];
   u64               game_quad_instance_count;
+  
+  Game_Structure structure_chunk[Game_ChunkLayer_Count][Game_ChunkDim * Game_ChunkDim];
+  PRNG_PCG32 pcg32;
+  
+  v3f player_p;
+  v3f player_dims;
 } Game_State;
 
+static void game_init(Game_State *state);
 static void game_update_and_render(Game_State *state, Game_Input *input, f32 game_update_secs);
 
 #endif
