@@ -42,6 +42,7 @@ static ID3D11SamplerState               *g_dx11_point_sampler_all;
 static ID3D11Texture2D                  *g_dx11_main_depth_stencil_tex;
 static ID3D11DepthStencilView           *g_dx11_main_depth_stencil_dsv;
 static ID3D11DepthStencilState          *g_dx11_depth_less_equal_stencil_nope;
+static ID3D11DepthStencilState          *g_dx11_depth_nope_stencil_nope;
 
 static IDXGISwapChain1           *g_dxgi_swap_chain;
 
@@ -354,25 +355,29 @@ dx11_create_depth_stencils(void)
   
   if (SUCCEEDED(ID3D11Device1_CreateDepthStencilState(g_dx11_dev, &depth_stencil_desc, &g_dx11_depth_less_equal_stencil_nope)))
   {
-    D3D11_TEXTURE2D_DESC tex_desc =
+    depth_stencil_desc.DepthEnable = FALSE;
+    if (SUCCEEDED(ID3D11Device1_CreateDepthStencilState(g_dx11_dev, &depth_stencil_desc, &g_dx11_depth_nope_stencil_nope)))
     {
-      .Width             = g_dx11_resolution_width,
-      .Height            = g_dx11_resolution_height,
-      .MipLevels         = 1,
-      .ArraySize         = 1,
-      .Format            = DXGI_FORMAT_D24_UNORM_S8_UINT,
-      .SampleDesc        = { 1, 0 },
-      .Usage             = D3D11_USAGE_DEFAULT,
-      .BindFlags         = D3D11_BIND_DEPTH_STENCIL,
-      .CPUAccessFlags    = 0,
-      .MiscFlags         = 0
-    };
-    
-    if (SUCCEEDED(ID3D11Device1_CreateTexture2D(g_dx11_dev, &tex_desc, 0, &g_dx11_main_depth_stencil_tex)))
-    {
-      if (SUCCEEDED(ID3D11Device1_CreateDepthStencilView(g_dx11_dev, (ID3D11Resource *)g_dx11_main_depth_stencil_tex, 0, &g_dx11_main_depth_stencil_dsv)))
+      D3D11_TEXTURE2D_DESC tex_desc =
       {
-        success = true;
+        .Width             = g_dx11_resolution_width,
+        .Height            = g_dx11_resolution_height,
+        .MipLevels         = 1,
+        .ArraySize         = 1,
+        .Format            = DXGI_FORMAT_D24_UNORM_S8_UINT,
+        .SampleDesc        = { 1, 0 },
+        .Usage             = D3D11_USAGE_DEFAULT,
+        .BindFlags         = D3D11_BIND_DEPTH_STENCIL,
+        .CPUAccessFlags    = 0,
+        .MiscFlags         = 0
+      };
+      
+      if (SUCCEEDED(ID3D11Device1_CreateTexture2D(g_dx11_dev, &tex_desc, 0, &g_dx11_main_depth_stencil_tex)))
+      {
+        if (SUCCEEDED(ID3D11Device1_CreateDepthStencilView(g_dx11_dev, (ID3D11Resource *)g_dx11_main_depth_stencil_tex, 0, &g_dx11_main_depth_stencil_dsv)))
+        {
+          success = true;
+        }
       }
     }
   }
@@ -538,6 +543,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
       LARGE_INTEGER perf_count_begin;
       QueryPerformanceCounter(&perf_count_begin);
       
+      Game_RenderCommand_List render_list;      
+      render_list.count        = 0;
+      render_list.capacity     = 8;
+      render_list.commands     = HeapAlloc(GetProcessHeap(), HEAP_GENERATE_EXCEPTIONS | HEAP_NO_SERIALIZE, render_list.capacity * sizeof(Game_RenderCommand));
       while (is_running)
       {
         for (u32 key = 0; key < Input_KeyType_Count; ++key)
@@ -604,7 +613,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
           is_running = false;
         }
         
-        game_update_and_render(&game_state, &g_game_input, game_update_secs);
+        game_update_and_render(&game_state, &render_list, &g_game_input, game_update_secs);
         
         D3D11_VIEWPORT viewport =
         {
@@ -621,8 +630,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         ID3D11DeviceContext_ClearDepthStencilView(g_dx11_dev_cont, g_dx11_main_depth_stencil_dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
         
         // buffer mapping
+        D3D11_MAPPED_SUBRESOURCE mapped_subresource;
         {
-          D3D11_MAPPED_SUBRESOURCE mapped_subresource;
           ID3D11DeviceContext_Map(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_cbuffer0, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subresource);
           DX11_Game_CBuffer0 new_cbuf0 =
           {
@@ -640,10 +649,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
           
           CopyMemory(mapped_subresource.pData, &new_cbuf1, sizeof(new_cbuf1));
           ID3D11DeviceContext_Unmap(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_cbuffer1, 0);
-          
-          ID3D11DeviceContext_Map(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subresource);
-          CopyMemory(mapped_subresource.pData, game_state.game_quad_instances, sizeof(Game_QuadInstance) * Game_MaxQuadInstances);
-          ID3D11DeviceContext_Unmap(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 0);
         }
 
         {        
@@ -657,7 +662,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         }
         
         {
-          ID3D11DeviceContext_RSSetState(g_dx11_dev_cont, g_dx11_rasterizer_fill_nocull_ccw);
           ID3D11DeviceContext_RSSetViewports(g_dx11_dev_cont, 1, &viewport);
         }
         
@@ -669,17 +673,41 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         {
           ID3D11DeviceContext_OMSetBlendState(g_dx11_dev_cont, g_dx11_blend_state, 0, 0xFFFFFFFF);
           ID3D11DeviceContext_OMSetRenderTargets(g_dx11_dev_cont, 1, &g_dx11_back_buffer_rtv, g_dx11_main_depth_stencil_dsv);
-          ID3D11DeviceContext_OMSetDepthStencilState(g_dx11_dev_cont, g_dx11_depth_less_equal_stencil_nope, 0);
         }
         
+        for (u64 render_command_idx = 0; render_command_idx < render_list.count; ++render_command_idx)
         {
-          ID3D11DeviceContext_DrawInstanced(g_dx11_dev_cont, 4, (UINT)game_state.game_quad_instance_count, 0, 0);
+          Game_RenderCommand command = render_list.commands[render_command_idx];
+          
+          if (command.flags & Game_RenderFlag_DrawWire)
+          {
+            ID3D11DeviceContext_RSSetState(g_dx11_dev_cont, g_dx11_rasterizer_wire_nocull_ccw);
+          }
+          else
+          {
+            ID3D11DeviceContext_RSSetState(g_dx11_dev_cont, g_dx11_rasterizer_fill_nocull_ccw);
+          }
+          
+          if (command.flags & Game_RenderFlag_DisableDepth)
+          {
+            ID3D11DeviceContext_OMSetDepthStencilState(g_dx11_dev_cont, g_dx11_depth_nope_stencil_nope, 0);
+          }
+          else
+          {
+            ID3D11DeviceContext_OMSetDepthStencilState(g_dx11_dev_cont, g_dx11_depth_less_equal_stencil_nope, 0);
+          }
+          
+          ID3D11DeviceContext_Map(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subresource);
+          CopyMemory(mapped_subresource.pData, command.instances.instances, sizeof(Game_QuadInstance) * Game_MaxQuadInstances);
+          ID3D11DeviceContext_Unmap(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 0);
+          
+          ID3D11DeviceContext_DrawInstanced(g_dx11_dev_cont, 4, (UINT)command.instances.count, 0, 0);
         }
+        
+        render_list.count = 0;
         
         ID3D11DeviceContext_ClearState(g_dx11_dev_cont);
         IDXGISwapChain1_Present(g_dxgi_swap_chain, 1, 0);
-        
-        game_state.game_quad_instance_count = 0;
         
         LARGE_INTEGER perf_count_end;
         QueryPerformanceCounter(&perf_count_end);
@@ -693,6 +721,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         {
           //missed frame
         }
+        
+        QueryPerformanceCounter(&perf_count_begin);
       }
     }
   }

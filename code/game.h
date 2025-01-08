@@ -89,21 +89,48 @@ typedef struct
   Game_InteractFlag flags;
 } Game_Structure;
 
+typedef u16 Game_RenderFlag;
+enum
+{
+  Game_RenderFlag_DrawWire                     = 0x1,
+  Game_RenderFlag_DisableDepth                 = 0x2,
+};
+
+typedef struct
+{
+  Game_QuadInstance instances[Game_MaxQuadInstances];
+  u64               count;
+} Game_QuadInstances;
+
+typedef struct
+{
+  Game_QuadInstances instances;
+  Game_RenderFlag    flags;
+  //u32               stencil_value;
+  // Texture2D         diffuse;
+} Game_RenderCommand;
+
+typedef struct
+{
+  Game_RenderCommand *commands;
+  u64                 count;
+  u64                 capacity;
+} Game_RenderCommand_List;
+
+static Game_RenderCommand *get_render_command(Game_RenderCommand_List *commands, Game_RenderFlag flags);
+
 #define Game_BlockDimPixels 48
 #define Game_ChunkDim 8
 typedef struct
-{
-  Game_QuadInstance game_quad_instances[Game_MaxQuadInstances];
-  u64               game_quad_instance_count;
-  
+{  
   Game_Structure structure_chunk[Game_ChunkLayer_Count][Game_ChunkDim * Game_ChunkDim];
-  PRNG_PCG32 pcg32;
+  PRNG_PCG32     pcg32;
   
   v3f player_p;
   v3f player_dims;
 } Game_State;
 
 static void game_init(Game_State *state);
-static void game_update_and_render(Game_State *state, Game_Input *input, f32 game_update_secs);
+static void game_update_and_render(Game_State *state, Game_RenderCommand_List *render_list, Game_Input *input, f32 game_update_secs);
 
 #endif

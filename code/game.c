@@ -13,6 +13,47 @@ static v3f g_structures_dims[] =
   { Game_BlockDimPixels, Game_BlockDimPixels, Game_BlockDimPixels },
 };
 
+// assume that the local position is the zero vector
+static void
+get_structure_aabb(Game_StructureType type, AABB **aabbs, u64 *count)
+{
+  static AABB default_aabb[] =
+  {
+    {
+      .p    = { 0.0f, 0.0f },
+      .dims = { 1.0f, 1.0f, 0.0f },
+    },
+  };
+  
+  static AABB fir_aabb[] =
+  {
+    {
+      .p    = { 0.0f, 0.0f },
+      .dims = { 1.0f, 1.0f, 0.0f },
+    },
+    
+    {
+      .p    = { 0.25f, 1.0f },
+      .dims = { 0.5f, 0.75f, 0.0f },
+    },
+  };
+  
+  switch (type)
+  {
+    case Game_StructureType_Tree_Fir:
+    {
+      *aabbs = fir_aabb;
+      *count = ArrayCount(fir_aabb);
+    } break;
+    
+    default:
+    {
+      *aabbs = default_aabb;
+      *count = ArrayCount(default_aabb);
+    } break;
+  }
+}
+
 static Game_Structure
 create_structure(Game_StructureType type)
 {
@@ -89,8 +130,136 @@ game_init(Game_State *state)
   state->player_dims  = (v3f) { 32, 32, 32 };
 }
 
+static inline Game_QuadInstance *
+add_quad(Game_QuadInstances *instances, v3f p, v3f dims, v4f colour)
+{
+  AssertTrue((instances->count + 1) < Game_MaxQuadInstances);
+  Game_QuadInstance *result = instances->instances + instances->count++;
+  result->p          = p;
+  result->dims       = dims;
+  result->colour     = colour;
+  return(result);
+}
+
 static void
-game_update_and_render(Game_State *game, Game_Input *input, f32 game_update_secs)
+draw_the_game(Game_State *game, Game_QuadInstances *instances)
+{  
+  for (Game_ChunkLayer layer = Game_ChunkLayer_NonInteractable;
+       layer < Game_ChunkLayer_Count;
+       ++layer)
+  {
+    for (u32 chunk_y = 0; chunk_y < Game_ChunkDim; ++chunk_y)
+    {
+      for (u32 chunk_x = 0; chunk_x < Game_ChunkDim; ++chunk_x)
+      {
+        u32 idx                  = chunk_x + chunk_y * Game_ChunkDim;
+        Game_Structure structure = game->structure_chunk[layer][idx];
+        
+        v3f p       = { (f32)chunk_x * Game_BlockDimPixels, (f32)chunk_y * Game_BlockDimPixels, Game_ChunkLayer_Count - (f32)layer };
+        if (structure.type != Game_StructureType_Count)
+        //if (structure.type == Game_StructureType_Tree_Fir)
+        {
+          v4f structure_colour = {0};
+          switch (structure.type)
+          {
+            case Game_StructureType_Grass_Flat:
+            {
+              structure_colour = (v4f) { 90.0f / 255.0f, 219.0f / 255.0f, 100.0f / 255.0f, 1.0f };
+            } break;
+            
+            case Game_StructureType_Grass_Blade:
+            {
+              structure_colour = (v4f) { 74.0f / 255.0f, 206.0f / 255.0f, 71.0f / 255.0f, 1.0f };
+            } break;
+            
+            case Game_StructureType_Tree_Fir:
+            {
+              structure_colour = (v4f) { 109.0f / 255.0f, 74.0f / 255.0f, 23.0f / 255.0f, 1.0f };
+              p.z -= 1.0f;
+            } break;
+            
+            case Game_StructureType_Rock:
+            {
+              structure_colour = (v4f) { 68.0f / 255.0f, 75.0f / 255.0f, 77.0f / 255.0f, 1.0f };
+            } break;
+            
+            default:
+            {
+              InvalidCodePath();
+            } break;
+          }
+
+          add_quad(instances,
+                   (v3f) { p.x, p.y, p.z },
+                   g_structures_dims[structure.type],
+                   structure_colour);
+        }
+      }
+    }
+  }
+
+  add_quad(instances,
+           (v3f) { game->player_p.x, game->player_p.y, game->player_p.z },
+           game->player_dims,
+           (v4f) { 1.0f, 1.0f, 1.0f, 1.0f });
+}
+
+static void
+debug_draw_aabbs(Game_State *game, Game_QuadInstances *instances)
+{
+  for (Game_ChunkLayer layer = Game_ChunkLayer_NonInteractable;
+       layer < Game_ChunkLayer_Count;
+       ++layer)
+  {
+    for (u32 chunk_y = 0; chunk_y < Game_ChunkDim; ++chunk_y)
+    {
+      for (u32 chunk_x = 0; chunk_x < Game_ChunkDim; ++chunk_x)
+      {
+        u32 idx                  = chunk_x + chunk_y * Game_ChunkDim;
+        Game_Structure structure = game->structure_chunk[layer][idx];
+        
+        f32 z_value = Game_ChunkLayer_Count - (f32)layer + 10;
+        if ((structure.type != Game_StructureType_Count) && (structure.flags & Game_InteractFlag_Collidable))
+        //if (structure.type == Game_StructureType_Tree_Fir)
+        {
+          v3f start_p           = { (f32)chunk_x * Game_BlockDimPixels, (f32)chunk_y * Game_BlockDimPixels, Game_ChunkLayer_Count - (f32)layer };
+          v4f structure_colour  = {1,1,1,1};
+          AABB *aabbs;
+          u64   aabbs_count;
+          get_structure_aabb(structure.type, &aabbs, &aabbs_count);
+          for (u64 aabb_idx = 0; aabb_idx < aabbs_count; ++aabb_idx)
+          {
+            AABB aabb     = aabbs[aabb_idx];
+            v3f p         = { start_p.x + aabb.p.x * Game_BlockDimPixels, start_p.y + aabb.p.y * Game_BlockDimPixels, z_value };
+            v3f dims      = { aabb.dims.x * Game_BlockDimPixels, aabb.dims.y * Game_BlockDimPixels, Game_BlockDimPixels };
+            add_quad(instances,
+                     (v3f) { p.x, p.y, p.z },
+                     dims,
+                     structure_colour);
+          }
+        }
+      }
+    }
+  }
+
+  add_quad(instances,
+           (v3f) { game->player_p.x, game->player_p.y, game->player_p.z },
+           game->player_dims,
+           (v4f) { 1.0f, 1.0f, 1.0f, 1.0f });
+}
+
+static inline Game_RenderCommand *
+get_render_command(Game_RenderCommand_List *command_list, Game_RenderFlag flags)
+{
+  AssertTrue((command_list->count + 1) < command_list->capacity);
+  Game_RenderCommand *result  = command_list->commands + command_list->count++;
+  result->instances.count     = 0;
+  result->flags               = flags;
+  return(result);
+}
+
+static void
+game_update_and_render(Game_State *game, Game_RenderCommand_List *render_list, Game_Input *input, f32 game_update_secs)
 {
   f32 player_dP_mag = 96.0f * game_update_secs;
   f32 player_dP_normalized_comp = 1.0f / sqrtf(2.0f);
@@ -144,79 +313,86 @@ game_update_and_render(Game_State *game, Game_Input *input, f32 game_update_secs
           
           if (structure.flags & Game_InteractFlag_Collidable)
           {
-            v2f structure_dims     = { Game_BlockDimPixels, Game_BlockDimPixels };
-            v2f structure_min      = { (f32)chunk_x * Game_BlockDimPixels - game->player_dims.x, (f32)chunk_y * Game_BlockDimPixels - game->player_dims.y };
-            v2f structure_max      = { structure_min.x + structure_dims.x + game->player_dims.x, structure_min.y + structure_dims.y + game->player_dims.y };
+            AABB *aabbs;
+            u64   aabbs_count;
+            get_structure_aabb(structure.type, &aabbs, &aabbs_count);
             
-            f32 t_farthest_entry   = 0.0f;
-            f32 t_nearest_entry    = FLT_MAX;
-            
-            b32 collision = true;
-            f32 epsilon   = 0.001f;
-            for (u32 slab_idx = 0; slab_idx < 2; ++slab_idx)
+            for (u64 aabb_idx = 0; aabb_idx < aabbs_count; ++aabb_idx)
             {
-              if (absf32(player_dP.v[slab_idx]) <= epsilon)
+              AABB aabb = aabbs[aabb_idx];
+              v2f structure_dims     = { aabb.dims.x * Game_BlockDimPixels, aabb.dims.y * Game_BlockDimPixels };
+              v2f structure_min      = { aabb.p.x * Game_BlockDimPixels + (f32)chunk_x * Game_BlockDimPixels - game->player_dims.x, aabb.p.y * Game_BlockDimPixels + (f32)chunk_y * Game_BlockDimPixels - game->player_dims.y };
+              v2f structure_max      = { structure_min.x + structure_dims.x + game->player_dims.x, structure_min.y + structure_dims.y + game->player_dims.y };
+              f32 t_farthest_entry   = 0.0f;
+              f32 t_nearest_entry    = FLT_MAX;
+              
+              b32 collision = true;
+              f32 epsilon   = 0.001f;
+              for (u32 slab_idx = 0; slab_idx < 2; ++slab_idx)
               {
-                if ((player_P.v[slab_idx] < structure_min.v[slab_idx]) || (player_P.v[slab_idx] > structure_max.v[slab_idx]))
+                if (absf32(player_dP.v[slab_idx]) <= epsilon)
                 {
-                  collision = false;
-                  break;
-                }
-              }
-              else
-              {
-                f32 t0 = (structure_min.v[slab_idx] - player_P.v[slab_idx]) / player_dP.v[slab_idx];
-                f32 t1 = (structure_max.v[slab_idx] - player_P.v[slab_idx]) / player_dP.v[slab_idx];
-                
-                if (t0 > t1)
-                {
-                  f32 temp = t0;
-                  t0 = t1;
-                  t1 = temp;
-                }
-                
-                if (t0 > t_farthest_entry)
-                {
-                  t_farthest_entry = t0;
-                }
-                
-                if (t1 < t_nearest_entry)
-                {
-                  t_nearest_entry = t1;
-                }
-                
-                if ((t_farthest_entry - t_nearest_entry) >= -epsilon)
-                {
-                  collision = false;
-                  break;
-                }
-              }
-            }
-            
-            if (collision)
-            {
-              v2f collision_normal = {0};
-              f32 t_hit = t_farthest_entry;
-              if ((t_hit >= 0.0f) && (t_hit <= 1.0f))
-              {
-                v2f tmn = { player_P.x - structure_min.x, player_P.y - structure_min.y };
-                v2f tmx = { structure_max.x - player_P.x, structure_max.y - player_P.y };
-                
-                u32 a = v2f_smallest_abs_comp_idx(tmn);
-                u32 b = v2f_smallest_abs_comp_idx(tmx);
-                
-                if (absf32(tmn.v[a]) < absf32(tmx.v[b]))
-                {
-                  collision_normal.v[a] = -1.0f;
+                  if ((player_P.v[slab_idx] < structure_min.v[slab_idx]) || (player_P.v[slab_idx] > structure_max.v[slab_idx]))
+                  {
+                    collision = false;
+                    break;
+                  }
                 }
                 else
                 {
-                  collision_normal.v[b] = 1.0f;
+                  f32 t0 = (structure_min.v[slab_idx] - player_P.v[slab_idx]) / player_dP.v[slab_idx];
+                  f32 t1 = (structure_max.v[slab_idx] - player_P.v[slab_idx]) / player_dP.v[slab_idx];
+                  
+                  if (t0 > t1)
+                  {
+                    f32 temp = t0;
+                    t0 = t1;
+                    t1 = temp;
+                  }
+                  
+                  if (t0 > t_farthest_entry)
+                  {
+                    t_farthest_entry = t0;
+                  }
+                  
+                  if (t1 < t_nearest_entry)
+                  {
+                    t_nearest_entry = t1;
+                  }
+                  
+                  if ((t_farthest_entry - t_nearest_entry) >= -epsilon)
+                  {
+                    collision = false;
+                    break;
+                  }
                 }
-                
-                v2f residue   = v2f_scale(1.0f - t_hit, player_dP.xy);
-                v2f proj      = v2f_scale(v2f_dot(residue, collision_normal), collision_normal);
-                player_dP.xy  = v2f_sub(player_dP.xy, proj);
+              }
+              
+              if (collision)
+              {
+                v2f collision_normal = {0};
+                f32 t_hit = t_farthest_entry;
+                if ((t_hit >= 0.0f) && (t_hit <= 1.0f))
+                {
+                  v2f tmn = { player_P.x - structure_min.x, player_P.y - structure_min.y };
+                  v2f tmx = { structure_max.x - player_P.x, structure_max.y - player_P.y };
+                  
+                  u32 a = v2f_smallest_abs_comp_idx(tmn);
+                  u32 b = v2f_smallest_abs_comp_idx(tmx);
+                  
+                  if (absf32(tmn.v[a]) < absf32(tmx.v[b]))
+                  {
+                    collision_normal.v[a] = -1.0f;
+                  }
+                  else
+                  {
+                    collision_normal.v[b] = 1.0f;
+                  }
+                  
+                  v2f residue   = v2f_scale(1.0f - t_hit, player_dP.xy);
+                  v2f proj      = v2f_scale(v2f_dot(residue, collision_normal), collision_normal);
+                  player_dP.xy  = v2f_sub(player_dP.xy, proj);
+                }
               }
             }
           }
@@ -227,66 +403,10 @@ game_update_and_render(Game_State *game, Game_Input *input, f32 game_update_secs
     v3f_add_eq(&game->player_p, player_dP);
   }
   
-  for (Game_ChunkLayer layer = Game_ChunkLayer_NonInteractable;
-       layer < Game_ChunkLayer_Count;
-       ++layer)
-  {
-    for (u32 chunk_y = 0; chunk_y < Game_ChunkDim; ++chunk_y)
-    {
-      for (u32 chunk_x = 0; chunk_x < Game_ChunkDim; ++chunk_x)
-      {
-        u32 idx                  = chunk_x + chunk_y * Game_ChunkDim;
-        Game_Structure structure = game->structure_chunk[layer][idx];
-        
-        v3f p       = { (f32)chunk_x * Game_BlockDimPixels, (f32)chunk_y * Game_BlockDimPixels, Game_ChunkLayer_Count - (f32)layer };
-        if (structure.type != Game_StructureType_Count)
-        //if (structure.type == Game_StructureType_Tree_Fir)
-        {
-          v4f structure_colour;
-          switch (structure.type)
-          {
-            case Game_StructureType_Grass_Flat:
-            {
-              structure_colour = (v4f) { 90.0f / 255.0f, 219.0f / 255.0f, 100.0f / 255.0f, 1.0f };
-            } break;
-            
-            case Game_StructureType_Grass_Blade:
-            {
-              structure_colour = (v4f) { 74.0f / 255.0f, 206.0f / 255.0f, 71.0f / 255.0f, 1.0f };
-            } break;
-            
-            case Game_StructureType_Tree_Fir:
-            {
-              structure_colour = (v4f) { 109.0f / 255.0f, 74.0f / 255.0f, 23.0f / 255.0f, 1.0f };
-              p.z -= 1.0f;
-            } break;
-            
-            case Game_StructureType_Rock:
-            {
-              structure_colour = (v4f) { 68.0f / 255.0f, 75.0f / 255.0f, 77.0f / 255.0f, 1.0f };
-            } break;
-            
-            default:
-            {
-              InvalidCodePath();
-            } break;
-          }
-
-          game->game_quad_instances[game->game_quad_instance_count++] = (Game_QuadInstance)
-          {
-            .p       = { p.x, p.y, p.z },
-            .dims    = g_structures_dims[structure.type],
-            .colour  = structure_colour
-          };
-        }
-      }
-    }
-  }
+  Game_RenderCommand *render_command;
+  render_command = get_render_command(render_list, 0);
+  draw_the_game(game, &(render_command->instances));
   
-  game->game_quad_instances[game->game_quad_instance_count++] = (Game_QuadInstance)
-  {
-    .p       = { game->player_p.x, game->player_p.y, game->player_p.z },
-    .dims    = game->player_dims,
-    .colour  = { 1.0f, 1.0f, 1.0f, 1.0f }
-  };
+  render_command = get_render_command(render_list, Game_RenderFlag_DrawWire|Game_RenderFlag_DisableDepth);
+  debug_draw_aabbs(game, &(render_command->instances));
 }

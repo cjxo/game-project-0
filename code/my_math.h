@@ -57,8 +57,8 @@ static m44 m44_make_ortho_z01(f32 left, f32 right, f32 top, f32 bottom, f32 near
 
 typedef struct
 {
-  v3f c;
-  v3f r;
-} AABB_Center;
+  v3f p;
+  v3f dims;
+} AABB;
 
 #endif
