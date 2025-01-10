@@ -248,19 +248,93 @@ debug_draw_aabbs(Game_State *game, Game_QuadInstances *instances)
            (v4f) { 1.0f, 1.0f, 1.0f, 1.0f });
 }
 
-static inline Game_RenderCommand *
-get_render_command(Game_RenderCommand_List *command_list, Game_RenderFlag flags)
+
+static Memory_Arena *
+arena_reserve(Platform_Functions functions, u64 size)
 {
-  AssertTrue((command_list->count + 1) < command_list->capacity);
-  Game_RenderCommand *result  = command_list->commands + command_list->count++;
-  result->instances.count     = 0;
-  result->flags               = flags;
+  AssertTrue(size > sizeof(Memory_Arena));
+  
+  size                   = AlignAToB(size, 16);
+  Memory_Arena *result   = 0;
+  u8 *base               = functions.reserve_memory(size);
+  
+  Assert(base);
+  
+  u64 initial_commit = sizeof(Memory_Arena);
+  functions.commit_memory(base, initial_commit);
+  result              = (Memory_Arena *)base;
+  result->base        = base;
+  result->capacity    = size;
+  result->stack_ptr   = initial_commit;
+  result->commit_ptr  = initial_commit;
+  result->rm          = functions.reserve_memory;
+  result->cm          = functions.commit_memory;
+  result->dm          = functions.decommit_memory;
+  
   return(result);
 }
 
-static void
-game_update_and_render(Game_State *game, Game_RenderCommand_List *render_list, Game_Input *input, f32 game_update_secs)
+static void *
+arena_push(Memory_Arena *arena, u64 size)
 {
+  void *result_block = 0;
+  size               = AlignAToB(size, 16);
+  u64 new_stack_ptr  = size + arena->stack_ptr;
+  u64 commit_size    = KB(128);
+  if (new_stack_ptr <= arena->capacity)
+  {
+    void *result_block2 = arena->base + arena->stack_ptr;
+    if (new_stack_ptr >= arena->commit_ptr)
+    {
+      u64 new_commit_ptr       = AlignAToB(new_stack_ptr, commit_size);
+      u64 desired_commit_ptr   = Minimum(new_commit_ptr, arena->capacity);
+      
+      if (desired_commit_ptr > arena->commit_ptr)
+      {
+        arena->cm(arena->base + arena->commit_ptr, desired_commit_ptr - arena->commit_ptr);
+        arena->commit_ptr  = desired_commit_ptr;
+      }
+    }
+    
+    if (arena->commit_ptr > arena->stack_ptr)
+    {
+      arena->stack_ptr   = new_stack_ptr;
+      result_block       = result_block2;
+    }
+  }
+  
+  Assert(result_block);
+  return(result_block);
+}
+
+static void *
+arena_pop(Memory_Arena *arena, u64 size)
+{
+  u64 commit_size    = KB(128);
+  size               = AlignAToB(size, 16);
+  AssertTrue(size <= (arena->stack_ptr + sizeof(Memory_Arena)));
+  
+  arena->stack_ptr        -= size;
+  u64 desired_commit_ptr   = AlignAToB(arena->stack_ptr, commit_size);
+  
+  if (desired_commit_ptr < arena->commit_ptr)
+  {
+    arena->dm(arena->base + desired_commit_ptr, arena->commit_ptr - desired_commit_ptr);
+    arena->commit_ptr = desired_commit_ptr;
+  }
+}
+
+static void
+game_update_and_render(Game_State *game, Platform_Functions platform_functions, Game_Input *input, f32 game_update_secs)
+{
+  if (!game->has_init)
+  {
+    game->main_arena      = arena_reserve(platform_functions, MB(32));
+    game->render_state    = arena_push_struct(game->main_arena, Game_RenderState);
+    game_init(game);
+    game->has_init = true;
+  }
+  
   f32 player_dP_mag = 96.0f * game_update_secs;
   f32 player_dP_normalized_comp = 1.0f / sqrtf(2.0f);
   v3f player_dP = { 0.0f, 0.0f, 0.0f };
@@ -403,10 +477,13 @@ game_update_and_render(Game_State *game, Game_RenderCommand_List *render_list, G
     v3f_add_eq(&game->player_p, player_dP);
   }
   
-  Game_RenderCommand *render_command;
-  render_command = get_render_command(render_list, 0);
-  draw_the_game(game, &(render_command->instances));
-  
-  render_command = get_render_command(render_list, Game_RenderFlag_DrawWire|Game_RenderFlag_DisableDepth);
-  debug_draw_aabbs(game, &(render_command->instances));
+  Game_RenderState *render_state = game->render_state;
+  //Game_RenderCommand *render_command;
+  //render_command = get_render_command(render_list, 0);
+  draw_the_game(game, &(render_state->filled_quads));
+
+#if defined(GAME_DEBUG)  
+  //render_command = get_render_command(render_list, Game_RenderFlag_DrawWire|Game_RenderFlag_DisableDepth);
+  debug_draw_aabbs(game, &(render_state->wire_quads));
+#endif
 }

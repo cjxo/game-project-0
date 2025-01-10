@@ -14,6 +14,7 @@
 #include "base.h"
 #include "my_math.h"
 #include "game.h"
+#include "platform.h"
 
 #include "base.c"
 #include "my_math.c"
@@ -52,7 +53,8 @@ static ID3D11Buffer               *g_dx11_game_cbuffer0;
 static ID3D11Buffer               *g_dx11_game_cbuffer1;
 static ID3D11Buffer               *g_dx11_game_quad_sbuffer0;
 static ID3D11ShaderResourceView   *g_dx11_game_quad_sbuffer0_srv;
-//static ID3D11Texture2D           *g_game_sprite_sheet_diffuse;
+static ID3D11Texture2D            *g_game_sprite_sheet_diffuse;
+static ID3D11Texture2D            *g_game_sprite_sheet_diffuse_srv;
 
 typedef struct
 {
@@ -97,6 +99,24 @@ w32_map_wparam_to_keytype(WPARAM wParam)
   }
 
   return(key);
+}
+
+static void *
+platform_reserve_memory(u64 size)
+{
+  return VirtualAlloc(0, size, MEM_RESERVE, PAGE_NOACCESS);
+}
+
+static void *
+platform_commit_memory(void *base, u64 size)
+{
+  return VirtualAlloc(base, size, MEM_COMMIT, PAGE_READWRITE);
+}
+
+static b32
+platform_decommit_memory(void *base, u64 size)
+{
+  return VirtualFree(base, size, MEM_DECOMMIT) != 0;
 }
 
 static LRESULT
@@ -475,6 +495,12 @@ dx11_create_game_shaders(void)
   }
 }
 
+static void
+dx11_create_game_textures(void)
+{
+  
+}
+
 int __stdcall
 WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         PSTR lpCmdLine, int nCmdShow)
@@ -524,9 +550,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
       dx11_create_depth_stencils();
       dx11_create_game_shaders();
       
-      Game_State game_state = {0};
-      game_init(&game_state);
-      
       b32 is_running = true;
       TIMECAPS tc;
       timeGetDevCaps(&tc, sizeof(tc));
@@ -543,10 +566,14 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
       LARGE_INTEGER perf_count_begin;
       QueryPerformanceCounter(&perf_count_begin);
       
-      Game_RenderCommand_List render_list;      
-      render_list.count        = 0;
-      render_list.capacity     = 8;
-      render_list.commands     = HeapAlloc(GetProcessHeap(), HEAP_GENERATE_EXCEPTIONS | HEAP_NO_SERIALIZE, render_list.capacity * sizeof(Game_RenderCommand));
+      
+      Platform_Functions  platform_functions =
+      {
+        .reserve_memory     = platform_reserve_memory,
+        .commit_memory      = platform_commit_memory,
+        .decommit_memory    = platform_decommit_memory,
+      };
+      Game_State game_state = {0};
       while (is_running)
       {
         for (u32 key = 0; key < Input_KeyType_Count; ++key)
@@ -613,7 +640,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
           is_running = false;
         }
         
-        game_update_and_render(&game_state, &render_list, &g_game_input, game_update_secs);
+        game_update_and_render(&game_state, platform_functions, &g_game_input, game_update_secs);
         
         D3D11_VIEWPORT viewport =
         {
@@ -675,36 +702,29 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
           ID3D11DeviceContext_OMSetRenderTargets(g_dx11_dev_cont, 1, &g_dx11_back_buffer_rtv, g_dx11_main_depth_stencil_dsv);
         }
         
-        for (u64 render_command_idx = 0; render_command_idx < render_list.count; ++render_command_idx)
-        {
-          Game_RenderCommand command = render_list.commands[render_command_idx];
-          
-          if (command.flags & Game_RenderFlag_DrawWire)
-          {
-            ID3D11DeviceContext_RSSetState(g_dx11_dev_cont, g_dx11_rasterizer_wire_nocull_ccw);
-          }
-          else
-          {
-            ID3D11DeviceContext_RSSetState(g_dx11_dev_cont, g_dx11_rasterizer_fill_nocull_ccw);
-          }
-          
-          if (command.flags & Game_RenderFlag_DisableDepth)
-          {
-            ID3D11DeviceContext_OMSetDepthStencilState(g_dx11_dev_cont, g_dx11_depth_nope_stencil_nope, 0);
-          }
-          else
-          {
-            ID3D11DeviceContext_OMSetDepthStencilState(g_dx11_dev_cont, g_dx11_depth_less_equal_stencil_nope, 0);
-          }
-          
-          ID3D11DeviceContext_Map(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subresource);
-          CopyMemory(mapped_subresource.pData, command.instances.instances, sizeof(Game_QuadInstance) * Game_MaxQuadInstances);
-          ID3D11DeviceContext_Unmap(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 0);
-          
-          ID3D11DeviceContext_DrawInstanced(g_dx11_dev_cont, 4, (UINT)command.instances.count, 0, 0);
-        }
+        // filled quads
+        Game_RenderState *render_state = game_state.render_state;
+        ID3D11DeviceContext_RSSetState(g_dx11_dev_cont, g_dx11_rasterizer_fill_nocull_ccw);
+        ID3D11DeviceContext_OMSetDepthStencilState(g_dx11_dev_cont, g_dx11_depth_less_equal_stencil_nope, 0);
         
-        render_list.count = 0;
+        ID3D11DeviceContext_Map(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subresource);
+        CopyMemory(mapped_subresource.pData, render_state->filled_quads.instances, sizeof(Game_QuadInstance) * Game_MaxQuadInstances);
+        ID3D11DeviceContext_Unmap(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 0);
+        
+        ID3D11DeviceContext_DrawInstanced(g_dx11_dev_cont, 4, (UINT)render_state->filled_quads.count, 0, 0);
+        
+        // wire quads
+        ID3D11DeviceContext_RSSetState(g_dx11_dev_cont, g_dx11_rasterizer_wire_nocull_ccw);
+        ID3D11DeviceContext_OMSetDepthStencilState(g_dx11_dev_cont, g_dx11_depth_nope_stencil_nope, 0);
+        
+        ID3D11DeviceContext_Map(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subresource);
+        CopyMemory(mapped_subresource.pData, render_state->wire_quads.instances, sizeof(Game_QuadInstance) * Game_MaxQuadInstances);
+        ID3D11DeviceContext_Unmap(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 0);
+        
+        ID3D11DeviceContext_DrawInstanced(g_dx11_dev_cont, 4, (UINT)render_state->wire_quads.count, 0, 0);
+        
+        render_state->filled_quads.count = 0;
+        render_state->wire_quads.count = 0;
         
         ID3D11DeviceContext_ClearState(g_dx11_dev_cont);
         IDXGISwapChain1_Present(g_dxgi_swap_chain, 1, 0);

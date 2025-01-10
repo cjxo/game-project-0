@@ -1,6 +1,8 @@
 #if !defined (GAME_H)
 #define GAME_H
 
+#include "platform.h"
+
 typedef u16 Input_KeyType;
 enum
 {
@@ -46,6 +48,24 @@ typedef struct
   s32 mouse_x, mouse_y, prev_mouse_x, prev_mouse_y;
 } Game_Input;
 
+//
+
+typedef struct
+{
+  u8 *base;
+  u64 capacity;
+  u64 stack_ptr;
+  u64 commit_ptr;
+  
+  Platform_ReserveMemory   rm;
+  Platform_CommitMemory    cm;
+  Platform_DecommitMemory  dm;
+} Memory_Arena;
+
+#define arena_push_array(a,t,c) (t*)arena_push((a),sizeof(t)*(c))
+#define arena_push_struct(a,t) arena_push_array(a,t,1)
+static void           *arena_push(Memory_Arena *arena, u64 size);
+static void           *arena_pop(Memory_Arena *arena, u64 size);
 //
 
 #define Game_MaxQuadInstances 512
@@ -104,33 +124,26 @@ typedef struct
 
 typedef struct
 {
-  Game_QuadInstances instances;
-  Game_RenderFlag    flags;
-  //u32               stencil_value;
-  // Texture2D         diffuse;
-} Game_RenderCommand;
-
-typedef struct
-{
-  Game_RenderCommand *commands;
-  u64                 count;
-  u64                 capacity;
-} Game_RenderCommand_List;
-
-static Game_RenderCommand *get_render_command(Game_RenderCommand_List *commands, Game_RenderFlag flags);
+  Game_QuadInstances filled_quads;
+  Game_QuadInstances wire_quads;
+} Game_RenderState;
 
 #define Game_BlockDimPixels 48
 #define Game_ChunkDim 8
 typedef struct
-{  
-  Game_Structure structure_chunk[Game_ChunkLayer_Count][Game_ChunkDim * Game_ChunkDim];
-  PRNG_PCG32     pcg32;
+{
+  Memory_Arena      *main_arena;
+  Game_RenderState  *render_state;
+  Game_Structure     structure_chunk[Game_ChunkLayer_Count][Game_ChunkDim * Game_ChunkDim];
+  PRNG_PCG32         pcg32;
   
   v3f player_p;
   v3f player_dims;
+  
+  b32 has_init;
 } Game_State;
 
 static void game_init(Game_State *state);
-static void game_update_and_render(Game_State *state, Game_RenderCommand_List *render_list, Game_Input *input, f32 game_update_secs);
+static void game_update_and_render(Game_State *state, Platform_Functions platform_functions, Game_Input *input, f32 game_update_secs);
 
 #endif

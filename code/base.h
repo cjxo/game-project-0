@@ -37,7 +37,6 @@ typedef struct
 {
   u64 state;
 } PRNG_PCG32;
-
 static inline void  pcg32_seed(PRNG_PCG32 *pcg, u64 seed);
 static inline u32   pcg32_u32(PRNG_PCG32 *pcg);
 static inline u32   pcg32_range_u32(PRNG_PCG32 *pcg, u32 low, u32 high);
