@@ -54,7 +54,7 @@ static ID3D11Buffer               *g_dx11_game_cbuffer1;
 static ID3D11Buffer               *g_dx11_game_quad_sbuffer0;
 static ID3D11ShaderResourceView   *g_dx11_game_quad_sbuffer0_srv;
 static ID3D11Texture2D            *g_game_sprite_sheet_diffuse;
-static ID3D11Texture2D            *g_game_sprite_sheet_diffuse_srv;
+static ID3D11ShaderResourceView   *g_game_sprite_sheet_diffuse_srv;
 
 typedef struct
 {
@@ -498,7 +498,108 @@ dx11_create_game_shaders(void)
 static void
 dx11_create_game_textures(void)
 {
+  b32 success = false;
+  HANDLE file_handle_main_sheet = CreateFileA("..\\res\\sprites\\main-sheet.bmp", GENERIC_READ, FILE_SHARE_READ, 0, 
+                                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+
+  if (file_handle_main_sheet != INVALID_HANDLE_VALUE)
+  {
+    LARGE_INTEGER file_size;
+    DWORD bytes_read;
+    
+    GetFileSizeEx(file_handle_main_sheet, &file_size);
+    
+    HANDLE heap_handle = GetProcessHeap();
+    char *buffer       = HeapAlloc(heap_handle, HEAP_GENERATE_EXCEPTIONS | HEAP_NO_SERIALIZE, file_size.QuadPart);
+    
+    if (ReadFile(file_handle_main_sheet, buffer, (DWORD)file_size.QuadPart, &bytes_read, 0) == TRUE)
+    {
+      // header
+      char signature[2];
+      CopyMemory(signature, buffer, 2);
+      AssertTrue(signature[0] == 'B');
+      AssertTrue(signature[1] == 'M');
+      //u32  file_size       = *(u32 *)(buffer + 2);
+      //u32  reserved0       = *(u32 *)(buffer + 6);
+      u32  data_offset     = *(u32 *)(buffer + 10);
+      
+      // infoHeader
+      //u32  info_header_size        = *(u32 *)(buffer + 14);
+      u32  width                   = *(u32 *)(buffer + 18);
+      u32  height                  = *(u32 *)(buffer + 22);
+      //u16  planes                  = *(u16 *)(buffer + 26);
+      u16  bits_per_pixel0          = *(u16 *)(buffer + 28) / 8;
+      //u32  compression             = *(u32 *)(buffer + 30);
+      //u32  image_size              = *(u32 *)(buffer + 34);
+      //u32  x_pixels_per_m          = *(u32 *)(buffer + 38);
+      //u32  y_pixels_per_m          = *(u32 *)(buffer + 42);
+      //u32  colours_used            = *(u32 *)(buffer + 46);
+      //u32  important_colours       = *(u32 *)(buffer + 50);
+      
+      u32  bytes_per_pixel         = 4;
+      u32  texture_size            = width * height * bytes_per_pixel;
+      u8  *pixel_data              = (u8 *)(buffer + data_offset + (height - 1) * width * bits_per_pixel0);
+      u8  *pixel_data_new          = HeapAlloc(heap_handle, HEAP_GENERATE_EXCEPTIONS | HEAP_NO_SERIALIZE, texture_size);
+      u8  *pixel_data_current      = pixel_data_new;
+    
+      for (u32 tex_y = 0; tex_y < height; ++tex_y)
+      {
+        u8 *row = pixel_data;
+        for (u32 tex_x = 0; tex_x < width; ++tex_x)
+        {
+          u8 b = *row++;
+          u8 g = *row++;
+          u8 r = *row++;
+          
+          *pixel_data_current++ = b;
+          *pixel_data_current++ = g;
+          *pixel_data_current++ = r;
+          *pixel_data_current++ = ((b == 0) && (g == 0) && (r == 0)) ? 0 : 0xFF;
+        }
+        
+        pixel_data -= width * bits_per_pixel0;
+      }
+      
+      D3D11_TEXTURE2D_DESC tex_desc = 
+      {
+        .Width               = width,
+        .Height              = height,
+        .MipLevels           = 1,
+        .ArraySize           = 1,
+        .Format              = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+        .SampleDesc          = { 1, 0 },
+        .Usage               = D3D11_USAGE_IMMUTABLE,
+        .BindFlags           = D3D11_BIND_SHADER_RESOURCE,
+        .CPUAccessFlags      = 0,
+        .MiscFlags           = 0,
+      };
+      
+      D3D11_SUBRESOURCE_DATA tex_data =
+      {
+        .pSysMem           = pixel_data_new,
+        .SysMemPitch       = width * 4,
+        .SysMemSlicePitch  = 0
+      };
+      if (SUCCEEDED(ID3D11Device_CreateTexture2D(g_dx11_dev, &tex_desc, &tex_data, &g_game_sprite_sheet_diffuse)))
+      {
+        if (SUCCEEDED(ID3D11Device_CreateShaderResourceView(g_dx11_dev, (ID3D11Resource *)g_game_sprite_sheet_diffuse, 0, &g_game_sprite_sheet_diffuse_srv)))
+        {
+          success = true;
+        }
+      }
+      
+      HeapFree(heap_handle, HEAP_NO_SERIALIZE, buffer);
+      HeapFree(heap_handle, HEAP_NO_SERIALIZE, pixel_data_new);
+    }
+    
+    CloseHandle(file_handle_main_sheet);
+  }
   
+  if (!success)
+  {
+    // TODO: error...
+    ExitProcess(1);
+  }
 }
 
 int __stdcall
@@ -549,6 +650,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
       dx11_create_states();
       dx11_create_depth_stencils();
       dx11_create_game_shaders();
+      dx11_create_game_textures();
       
       b32 is_running = true;
       TIMECAPS tc;
@@ -695,6 +797,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         {
           ID3D11DeviceContext_PSSetShader(g_dx11_dev_cont, g_dx11_game_pshader, 0, 0);
           ID3D11DeviceContext_PSSetConstantBuffers(g_dx11_dev_cont, 1, 1, &g_dx11_game_cbuffer1);
+          ID3D11DeviceContext_PSSetShaderResources(g_dx11_dev_cont, 1, 1, &g_game_sprite_sheet_diffuse_srv);
         }
         
         {
