@@ -153,8 +153,10 @@ add_quad_tex_clipped(Game_QuadInstances *instances, v3f p, v3f dims, v2f atlas_p
 }
 
 static void
-draw_the_game(Game_State *game, Game_QuadInstances *instances)
-{  
+draw_the_game(Game_State *game)
+{
+  v2f camera_p                       = game->player_p.xy;
+  Game_RenderState *render_state     = game->render_state;
   for (Game_ChunkLayer layer = Game_ChunkLayer_NonInteractable;
        layer < Game_ChunkLayer_Count;
        ++layer)
@@ -166,7 +168,7 @@ draw_the_game(Game_State *game, Game_QuadInstances *instances)
         u32 idx                  = chunk_x + chunk_y * Game_ChunkDim;
         Game_Structure structure = game->structure_chunk[layer][idx];
         
-        v3f p       = { (f32)chunk_x * Game_BlockDimPixels, (f32)chunk_y * Game_BlockDimPixels, Game_ChunkLayer_Count - (f32)layer };
+        v3f p       = { (f32)chunk_x * Game_BlockDimPixels - camera_p.x, (f32)chunk_y * Game_BlockDimPixels - camera_p.y, Game_ChunkLayer_Count - (f32)layer };
         if (structure.type != Game_StructureType_Count)
         //if (structure.type == Game_StructureType_Tree_Fir)
         {
@@ -207,68 +209,43 @@ draw_the_game(Game_State *game, Game_QuadInstances *instances)
           
           if (tex)
           {
-            add_quad_tex_clipped(instances, p, g_structures_dims[structure.type],
+            add_quad_tex_clipped(&render_state->filled_quads, p, g_structures_dims[structure.type],
                                  atlas_p, atlas_dims);
           }
           else
           {
-            add_quad(instances, p, g_structures_dims[structure.type], structure_colour);
+            add_quad(&render_state->filled_quads, p, g_structures_dims[structure.type], structure_colour);
           }
-        }
-      }
-    }
-  }
-
-  add_quad(instances,
-           (v3f) { game->player_p.x, game->player_p.y, game->player_p.z },
-           game->player_dims,
-           (v4f) { 1.0f, 1.0f, 1.0f, 1.0f });
-}
-
-static void
-debug_draw_aabbs(Game_State *game, Game_QuadInstances *instances)
-{
-  for (Game_ChunkLayer layer = Game_ChunkLayer_NonInteractable;
-       layer < Game_ChunkLayer_Count;
-       ++layer)
-  {
-    for (u32 chunk_y = 0; chunk_y < Game_ChunkDim; ++chunk_y)
-    {
-      for (u32 chunk_x = 0; chunk_x < Game_ChunkDim; ++chunk_x)
-      {
-        u32 idx                  = chunk_x + chunk_y * Game_ChunkDim;
-        Game_Structure structure = game->structure_chunk[layer][idx];
-        
-        f32 z_value = Game_ChunkLayer_Count - (f32)layer + 10;
-        if ((structure.type != Game_StructureType_Count) && (structure.flags & Game_InteractFlag_Collidable))
-        //if (structure.type == Game_StructureType_Tree_Fir)
-        {
-          v3f start_p           = { (f32)chunk_x * Game_BlockDimPixels, (f32)chunk_y * Game_BlockDimPixels, Game_ChunkLayer_Count - (f32)layer };
-          v4f structure_colour  = {1,1,1,1};
-          AABB *aabbs;
-          u64   aabbs_count;
-          get_structure_aabb(structure.type, &aabbs, &aabbs_count);
-          for (u64 aabb_idx = 0; aabb_idx < aabbs_count; ++aabb_idx)
+          
+          f32 z_value = Game_ChunkLayer_Count - (f32)layer + 10;
+          if ((structure.type != Game_StructureType_Count) && (structure.flags & Game_InteractFlag_Collidable))
+          //if (structure.type == Game_StructureType_Tree_Fir)
           {
-            AABB aabb     = aabbs[aabb_idx];
-            v3f p         = { start_p.x + aabb.p.x * Game_BlockDimPixels, start_p.y + aabb.p.y * Game_BlockDimPixels, z_value };
-            v3f dims      = { aabb.dims.x * Game_BlockDimPixels, aabb.dims.y * Game_BlockDimPixels, Game_BlockDimPixels };
-            add_quad(instances,
-                     (v3f) { p.x, p.y, p.z },
-                     dims,
-                     structure_colour);
+            v3f start_p           = { (f32)chunk_x * Game_BlockDimPixels - camera_p.x, (f32)chunk_y * Game_BlockDimPixels - camera_p.y, Game_ChunkLayer_Count - (f32)layer };
+            structure_colour      = (v4f){1,1,1,1};
+            AABB *aabbs;
+            u64   aabbs_count;
+            get_structure_aabb(structure.type, &aabbs, &aabbs_count);
+            for (u64 aabb_idx = 0; aabb_idx < aabbs_count; ++aabb_idx)
+            {
+              AABB aabb     = aabbs[aabb_idx];
+              p             = (v3f) { start_p.x + aabb.p.x * Game_BlockDimPixels, start_p.y + aabb.p.y * Game_BlockDimPixels, z_value };
+              v3f dims      = { aabb.dims.x * Game_BlockDimPixels, aabb.dims.y * Game_BlockDimPixels, Game_BlockDimPixels };
+              add_quad(&render_state->wire_quads,
+                       (v3f) { p.x, p.y, p.z },
+                       dims,
+                       structure_colour);
+            }
           }
         }
       }
     }
   }
 
-  add_quad(instances,
-           (v3f) { game->player_p.x, game->player_p.y, game->player_p.z },
-           game->player_dims,
-           (v4f) { 1.0f, 1.0f, 1.0f, 1.0f });
+  v3f player_p = { game->player_p.x - camera_p.x, game->player_p.y - camera_p.y, game->player_p.z };
+  add_quad(&render_state->filled_quads, player_p, game->player_dims, (v4f) { 1.0f, 1.0f, 1.0f, 1.0f });
+  add_quad(&render_state->wire_quads, player_p, game->player_dims, (v4f) { 1.0f, 1.0f, 1.0f, 1.0f });
 }
-
 
 static Memory_Arena *
 arena_reserve(Platform_Functions functions, u64 size)
@@ -498,13 +475,5 @@ game_update_and_render(Game_State *game, Platform_Functions platform_functions, 
     v3f_add_eq(&game->player_p, player_dP);
   }
   
-  Game_RenderState *render_state = game->render_state;
-  //Game_RenderCommand *render_command;
-  //render_command = get_render_command(render_list, 0);
-  draw_the_game(game, &(render_state->filled_quads));
-
-#if defined(GAME_DEBUG)  
-  //render_command = get_render_command(render_list, Game_RenderFlag_DrawWire|Game_RenderFlag_DisableDepth);
-  debug_draw_aabbs(game, &(render_state->wire_quads));
-#endif
+  draw_the_game(game);
 }
