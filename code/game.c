@@ -138,6 +138,17 @@ add_quad(Game_QuadInstances *instances, v3f p, v3f dims, v4f colour)
   result->p          = p;
   result->dims       = dims;
   result->colour     = colour;
+  result->tex_on_me  = 0;
+  return(result);
+}
+
+static inline Game_QuadInstance *
+add_quad_tex_clipped(Game_QuadInstances *instances, v3f p, v3f dims, v2f atlas_p, v2f atlas_dims)
+{
+  Game_QuadInstance *result    = add_quad(instances, p, dims, (v4f){ 1.0f, 1.0f, 1.0f, 1.0f });
+  result->atlas_p              = atlas_p;
+  result->atlas_dims           = atlas_dims;
+  result->tex_on_me            = 1;
   return(result);
 }
 
@@ -159,12 +170,17 @@ draw_the_game(Game_State *game, Game_QuadInstances *instances)
         if (structure.type != Game_StructureType_Count)
         //if (structure.type == Game_StructureType_Tree_Fir)
         {
-          v4f structure_colour = {0};
+          v4f structure_colour = {1.0f, 1.0f, 1.0f, 1.0f};
+          v2f atlas_p          = {0};
+          v2f atlas_dims       = {0};
+          b32 tex              = false;
           switch (structure.type)
           {
             case Game_StructureType_Grass_Flat:
             {
-              structure_colour = (v4f) { 90.0f / 255.0f, 219.0f / 255.0f, 100.0f / 255.0f, 1.0f };
+              atlas_p    = (v2f) { 0.0f, 0.0f };
+              atlas_dims = (v2f) { 32.0f, 32.0f };
+              tex        = true;
             } break;
             
             case Game_StructureType_Grass_Blade:
@@ -188,11 +204,16 @@ draw_the_game(Game_State *game, Game_QuadInstances *instances)
               InvalidCodePath();
             } break;
           }
-
-          add_quad(instances,
-                   (v3f) { p.x, p.y, p.z },
-                   g_structures_dims[structure.type],
-                   structure_colour);
+          
+          if (tex)
+          {
+            add_quad_tex_clipped(instances, p, g_structures_dims[structure.type],
+                                 atlas_p, atlas_dims);
+          }
+          else
+          {
+            add_quad(instances, p, g_structures_dims[structure.type], structure_colour);
+          }
         }
       }
     }

@@ -72,9 +72,12 @@ static void           *arena_pop(Memory_Arena *arena, u64 size);
 typedef struct
 {
   v3f p;
-  v3f dims;
-  
+  v3f dims;  
   v4f colour;
+  
+  v2f atlas_p;
+  v2f atlas_dims;
+  u32 tex_on_me;
 } Game_QuadInstance;
 
 typedef u16 Game_InteractFlag;

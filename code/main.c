@@ -45,7 +45,7 @@ static ID3D11DepthStencilView           *g_dx11_main_depth_stencil_dsv;
 static ID3D11DepthStencilState          *g_dx11_depth_less_equal_stencil_nope;
 static ID3D11DepthStencilState          *g_dx11_depth_nope_stencil_nope;
 
-static IDXGISwapChain1           *g_dxgi_swap_chain;
+static IDXGISwapChain1            *g_dxgi_swap_chain;
 
 static ID3D11VertexShader         *g_dx11_game_vshader;
 static ID3D11PixelShader          *g_dx11_game_pshader;
@@ -55,10 +55,13 @@ static ID3D11Buffer               *g_dx11_game_quad_sbuffer0;
 static ID3D11ShaderResourceView   *g_dx11_game_quad_sbuffer0_srv;
 static ID3D11Texture2D            *g_game_sprite_sheet_diffuse;
 static ID3D11ShaderResourceView   *g_game_sprite_sheet_diffuse_srv;
+static u32                         g_game_sprite_sheet_dims_x;
+static u32                         g_game_sprite_sheet_dims_y;
 
 typedef struct
 {
   m44 proj;
+  v4f inv_altas_dims;
 } DX11_Game_CBuffer0;
 
 typedef struct
@@ -322,9 +325,9 @@ dx11_create_states(void)
   //sam_desc.Filter              = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
   //sam_desc.Filter = D3D11_FILTER_MIN_LINEAR_MAG_POINT_MIP_LINEAR;
   //sam_desc.Filter = D3D11_FILTER_ANISOTROPIC;
-  sam_desc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
-  sam_desc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
-  sam_desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+  sam_desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+  sam_desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+  sam_desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
   sam_desc.MipLODBias = 0;
   //sam_desc.MaxAnisotropy = D3D11_REQ_MAXANISOTROPY;
   sam_desc.MaxAnisotropy = 1;
@@ -403,91 +406,6 @@ dx11_create_depth_stencils(void)
   }
   
 
-  if (!success)
-  {
-    // TODO: error...
-    ExitProcess(1);
-  }
-}
-
-static void
-dx11_create_game_shaders(void)
-{
-  b32 success = false;
-  ID3DBlob *bytecode, *errmsg;
-  D3DCompileFromFile(L"..\\code\\shaders\\game-shader.hlsl", 0, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-                     "vs_main", "vs_5_0", DX11_ShaderCompileFlags, 0, &bytecode, &errmsg);
-  
-  if (errmsg)
-  {
-    OutputDebugStringA(ID3D10Blob_GetBufferPointer(errmsg));
-    Assert(0);
-  }
-  
-  if (SUCCEEDED(ID3D11Device1_CreateVertexShader(g_dx11_dev, ID3D10Blob_GetBufferPointer(bytecode),
-                                                 ID3D10Blob_GetBufferSize(bytecode),
-                                                 0, &g_dx11_game_vshader)))
-  {
-    ID3D10Blob_Release(bytecode);
-    
-    D3DCompileFromFile(L"..\\code\\shaders\\game-shader.hlsl", 0, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-                     "ps_main", "ps_5_0", DX11_ShaderCompileFlags, 0, &bytecode, &errmsg);
-                     
-    if (errmsg)
-    {
-      OutputDebugStringA(ID3D10Blob_GetBufferPointer(errmsg));
-      Assert(0);
-    }
-    
-    if (SUCCEEDED(ID3D11Device1_CreatePixelShader(g_dx11_dev, ID3D10Blob_GetBufferPointer(bytecode),
-                                                  ID3D10Blob_GetBufferSize(bytecode),
-                                                  0, &g_dx11_game_pshader)))
-    {
-      ID3D10Blob_Release(bytecode);
-      
-      D3D11_BUFFER_DESC cbuf_desc =
-      {
-        .ByteWidth           = sizeof(DX11_Game_CBuffer0),
-        .Usage               = D3D11_USAGE_DYNAMIC,
-        .BindFlags           = D3D11_BIND_CONSTANT_BUFFER,
-        .CPUAccessFlags      = D3D11_CPU_ACCESS_WRITE,
-        .MiscFlags           = 0,
-        .StructureByteStride = 0,
-      };
-      
-      if (SUCCEEDED(ID3D11Device1_CreateBuffer(g_dx11_dev, &cbuf_desc, 0, &g_dx11_game_cbuffer0)))
-      {
-        cbuf_desc.ByteWidth           = sizeof(DX11_Game_CBuffer1);
-        if (SUCCEEDED(ID3D11Device1_CreateBuffer(g_dx11_dev, &cbuf_desc, 0, &g_dx11_game_cbuffer1)))
-        {
-          D3D11_BUFFER_DESC sbuffer_desc =
-          {
-            .ByteWidth				    = sizeof(Game_QuadInstance) * Game_MaxQuadInstances,
-            .Usage					      = D3D11_USAGE_DYNAMIC,
-            .BindFlags				    = D3D11_BIND_SHADER_RESOURCE,
-            .CPUAccessFlags		    = D3D11_CPU_ACCESS_WRITE,
-            .MiscFlags				    = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,
-            .StructureByteStride	= sizeof(Game_QuadInstance),
-          };
-          if (SUCCEEDED(ID3D11Device1_CreateBuffer(g_dx11_dev, &sbuffer_desc, 0, &g_dx11_game_quad_sbuffer0)))
-          {
-            D3D11_SHADER_RESOURCE_VIEW_DESC sbuffer_srv_desc =
-            {
-              .Format           = DXGI_FORMAT_UNKNOWN,
-              .ViewDimension    = D3D11_SRV_DIMENSION_BUFFER,
-              .Buffer           = { .NumElements = Game_MaxQuadInstances }
-            };
-            if (SUCCEEDED(ID3D11Device1_CreateShaderResourceView(g_dx11_dev, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 
-                                                                 &sbuffer_srv_desc, &g_dx11_game_quad_sbuffer0_srv)))
-            {
-              success = true;
-            }
-          }
-        }
-      }
-    }
-  }
-  
   if (!success)
   {
     // TODO: error...
@@ -580,11 +498,14 @@ dx11_create_game_textures(void)
         .SysMemPitch       = width * 4,
         .SysMemSlicePitch  = 0
       };
+      
       if (SUCCEEDED(ID3D11Device_CreateTexture2D(g_dx11_dev, &tex_desc, &tex_data, &g_game_sprite_sheet_diffuse)))
       {
         if (SUCCEEDED(ID3D11Device_CreateShaderResourceView(g_dx11_dev, (ID3D11Resource *)g_game_sprite_sheet_diffuse, 0, &g_game_sprite_sheet_diffuse_srv)))
         {
-          success = true;
+          success                    = true;
+          g_game_sprite_sheet_dims_x = width;
+          g_game_sprite_sheet_dims_y = height;
         }
       }
       
@@ -593,6 +514,108 @@ dx11_create_game_textures(void)
     }
     
     CloseHandle(file_handle_main_sheet);
+  }
+  
+  if (!success)
+  {
+    // TODO: error...
+    ExitProcess(1);
+  }
+}
+
+static void
+dx11_create_game_shaders(void)
+{
+  b32 success = false;
+  ID3DBlob *bytecode, *errmsg;
+  D3DCompileFromFile(L"..\\code\\shaders\\game-shader.hlsl", 0, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                     "vs_main", "vs_5_0", DX11_ShaderCompileFlags, 0, &bytecode, &errmsg);
+  
+  if (errmsg)
+  {
+    OutputDebugStringA(ID3D10Blob_GetBufferPointer(errmsg));
+    Assert(0);
+  }
+  
+  if (SUCCEEDED(ID3D11Device1_CreateVertexShader(g_dx11_dev, ID3D10Blob_GetBufferPointer(bytecode),
+                                                 ID3D10Blob_GetBufferSize(bytecode),
+                                                 0, &g_dx11_game_vshader)))
+  {
+    ID3D10Blob_Release(bytecode);
+    
+    D3DCompileFromFile(L"..\\code\\shaders\\game-shader.hlsl", 0, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                     "ps_main", "ps_5_0", DX11_ShaderCompileFlags, 0, &bytecode, &errmsg);
+                     
+    if (errmsg)
+    {
+      OutputDebugStringA(ID3D10Blob_GetBufferPointer(errmsg));
+      Assert(0);
+    }
+    
+    if (SUCCEEDED(ID3D11Device1_CreatePixelShader(g_dx11_dev, ID3D10Blob_GetBufferPointer(bytecode),
+                                                  ID3D10Blob_GetBufferSize(bytecode),
+                                                  0, &g_dx11_game_pshader)))
+    {
+      ID3D10Blob_Release(bytecode);
+      
+      D3D11_BUFFER_DESC cbuf_desc =
+      {
+        .ByteWidth           = sizeof(DX11_Game_CBuffer0),
+        .Usage               = D3D11_USAGE_DYNAMIC,
+        .BindFlags           = D3D11_BIND_CONSTANT_BUFFER,
+        .CPUAccessFlags      = D3D11_CPU_ACCESS_WRITE,
+        .MiscFlags           = 0,
+        .StructureByteStride = 0,
+      };
+      
+      f32 half_reso_x                    = (f32)g_dx11_resolution_width * 0.5f;
+      f32 half_reso_y                    = (f32)g_dx11_resolution_height * 0.5f;
+      f32 one_over_sprite_sheet_width    = 1.0f / (f32)g_game_sprite_sheet_dims_x;
+      f32 one_over_sprite_sheet_height   = 1.0f / (f32)g_game_sprite_sheet_dims_y;
+      DX11_Game_CBuffer0 new_cbuf0 =
+      {
+        .proj           = m44_make_ortho_z01(-half_reso_x, half_reso_x, half_reso_y, -half_reso_y, 0.0f, 50.0f),
+        .inv_altas_dims = (v4f){ one_over_sprite_sheet_width, one_over_sprite_sheet_height, 0.0f, 0.0f }
+      };
+      
+      D3D11_SUBRESOURCE_DATA new_cbuf0_data =
+      {
+        .pSysMem = &new_cbuf0,
+        .SysMemPitch = sizeof(DX11_Game_CBuffer0)
+      };
+      
+      if (SUCCEEDED(ID3D11Device1_CreateBuffer(g_dx11_dev, &cbuf_desc, &new_cbuf0_data, &g_dx11_game_cbuffer0)))
+      {
+        cbuf_desc.ByteWidth           = sizeof(DX11_Game_CBuffer1);
+        if (SUCCEEDED(ID3D11Device1_CreateBuffer(g_dx11_dev, &cbuf_desc, 0, &g_dx11_game_cbuffer1)))
+        {
+          D3D11_BUFFER_DESC sbuffer_desc =
+          {
+            .ByteWidth				    = sizeof(Game_QuadInstance) * Game_MaxQuadInstances,
+            .Usage					      = D3D11_USAGE_DYNAMIC,
+            .BindFlags				    = D3D11_BIND_SHADER_RESOURCE,
+            .CPUAccessFlags		    = D3D11_CPU_ACCESS_WRITE,
+            .MiscFlags				    = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,
+            .StructureByteStride	= sizeof(Game_QuadInstance),
+          };
+          
+          if (SUCCEEDED(ID3D11Device1_CreateBuffer(g_dx11_dev, &sbuffer_desc, 0, &g_dx11_game_quad_sbuffer0)))
+          {
+            D3D11_SHADER_RESOURCE_VIEW_DESC sbuffer_srv_desc =
+            {
+              .Format           = DXGI_FORMAT_UNKNOWN,
+              .ViewDimension    = D3D11_SRV_DIMENSION_BUFFER,
+              .Buffer           = { .NumElements = Game_MaxQuadInstances }
+            };
+            if (SUCCEEDED(ID3D11Device1_CreateShaderResourceView(g_dx11_dev, (ID3D11Resource *)g_dx11_game_quad_sbuffer0, 
+                                                                 &sbuffer_srv_desc, &g_dx11_game_quad_sbuffer0_srv)))
+            {
+              success = true;
+            }
+          }
+        }
+      }
+    }
   }
   
   if (!success)
@@ -649,8 +672,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
       dx11_create_swap_chain();
       dx11_create_states();
       dx11_create_depth_stencils();
-      dx11_create_game_shaders();
       dx11_create_game_textures();
+      dx11_create_game_shaders();
       
       b32 is_running = true;
       TIMECAPS tc;
@@ -667,7 +690,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
       
       LARGE_INTEGER perf_count_begin;
       QueryPerformanceCounter(&perf_count_begin);
-      
       
       Platform_Functions  platform_functions =
       {
@@ -760,16 +782,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         
         // buffer mapping
         D3D11_MAPPED_SUBRESOURCE mapped_subresource;
-        {
-          ID3D11DeviceContext_Map(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_cbuffer0, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subresource);
-          DX11_Game_CBuffer0 new_cbuf0 =
-          {
-            .proj = m44_make_ortho_z01(-viewport.Width * 0.5f, viewport.Width * 0.5f, viewport.Height * 0.5f, -viewport.Height * 0.5f, 0.0f, 50.0f),
-          };
-          
-          CopyMemory(mapped_subresource.pData, &new_cbuf0, sizeof(new_cbuf0));
-          ID3D11DeviceContext_Unmap(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_cbuffer0, 0);
-          
+        {          
           ID3D11DeviceContext_Map(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_cbuffer1, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subresource);
           DX11_Game_CBuffer1 new_cbuf1 =
           {
@@ -796,6 +809,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         
         {
           ID3D11DeviceContext_PSSetShader(g_dx11_dev_cont, g_dx11_game_pshader, 0, 0);
+          ID3D11DeviceContext_PSSetSamplers(g_dx11_dev_cont, 0, 1, &g_dx11_point_sampler_all);
           ID3D11DeviceContext_PSSetConstantBuffers(g_dx11_dev_cont, 1, 1, &g_dx11_game_cbuffer1);
           ID3D11DeviceContext_PSSetShaderResources(g_dx11_dev_cont, 1, 1, &g_game_sprite_sheet_diffuse_srv);
         }

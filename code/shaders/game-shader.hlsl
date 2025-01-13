@@ -1,6 +1,7 @@
 cbuffer ConstantStore0 : register(b0)
 {
   float4x4 proj;
+  float4   inv_sprite_sheet_dims;
 };
 
 cbuffer ConstantStore1 : register(b1)
@@ -12,15 +13,20 @@ cbuffer ConstantStore1 : register(b1)
 struct Quad_Instance
 {
   float3 p;
-  float3 dims;
-  
+  float3 dims;  
   float4 colour;
+  
+  float2 atlas_p;
+  float2 atlas_dims;
+  uint tex_on_me;
 };
 
 struct VertexShader_Output
 {
   float4 p          : SV_Position;
   float4 colour     : Colour_Mod;
+  float2 uv         : Tex_UV;
+  uint tex_on_me    : Tex_On_Me;
 };
 
 StructuredBuffer<Quad_Instance>       g_quad_instances           : register(t0);
@@ -46,6 +52,26 @@ vs_main(uint iid : SV_InstanceID, uint vid : SV_VertexID)
   
   result.p        = mul(proj, float4(vertex, 1.0f));
   result.colour   = instances.colour;
+  
+  if (vid == 0)
+  {
+    result.uv = instances.atlas_p;
+  }
+  else if (vid == 1)
+  {
+    result.uv = float2(instances.atlas_p.x, instances.atlas_p.y + instances.atlas_dims.y);
+  }
+  else if (vid == 2)
+  {
+    result.uv = float2(instances.atlas_p.x + instances.atlas_dims.x, instances.atlas_p.y);
+  }
+  else
+  {
+    result.uv = instances.atlas_p + instances.atlas_dims;
+  }
+  
+  result.uv *= inv_sprite_sheet_dims.xy;
+  result.tex_on_me = instances.tex_on_me;
   return(result);
 }
 
@@ -59,6 +85,17 @@ float4
 ps_main(VertexShader_Output inp) : SV_Target
 {
   float4 sample = linear_to_srgb(inp.colour);
+  
+  if (inp.tex_on_me)
+  {
+    float4 texel  = g_sprite_sheet_diffuse.Sample(g_sampler, inp.uv);
+    sample *= texel;
+  }
+  
+  if (sample.a == 0)
+  {
+    discard;
+  }
   
   return sample;
 }
