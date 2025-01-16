@@ -187,7 +187,9 @@ draw_the_game(Game_State *game)
             
             case Game_StructureType_Grass_Blade:
             {
-              structure_colour = (v4f) { 74.0f / 255.0f, 206.0f / 255.0f, 71.0f / 255.0f, 1.0f };
+              atlas_p    = (v2f) { 64.0f, 16.0f };
+              atlas_dims = (v2f) { 16.0f, 16.0f };
+              tex        = true;
             } break;
             
             case Game_StructureType_Tree_Fir:
@@ -231,10 +233,7 @@ draw_the_game(Game_State *game)
               AABB aabb     = aabbs[aabb_idx];
               p             = (v3f) { start_p.x + aabb.p.x * Game_BlockDimPixels, start_p.y + aabb.p.y * Game_BlockDimPixels, z_value };
               v3f dims      = { aabb.dims.x * Game_BlockDimPixels, aabb.dims.y * Game_BlockDimPixels, Game_BlockDimPixels };
-              add_quad(&render_state->wire_quads,
-                       (v3f) { p.x, p.y, p.z },
-                       dims,
-                       structure_colour);
+              add_quad(&render_state->wire_quads, p, dims, structure_colour);
             }
           }
         }

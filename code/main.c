@@ -10,6 +10,8 @@
 #include <dxgidebug.h>
 #include <d3d11sdklayers.h>
 #include <d3dcompiler.h>
+#include <wincodec.h>
+#include <shlwapi.h>
 
 #include "base.h"
 #include "my_math.h"
@@ -30,8 +32,8 @@ static s32    g_w32_window_height;
 # define DX11_ShaderCompileFlags (D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR|D3DCOMPILE_OPTIMIZATION_LEVEL3)
 #endif
 
-static s32                               g_dx11_resolution_width  = 1280;
-static s32                               g_dx11_resolution_height = 720;
+static s32                               g_dx11_resolution_width  = 640;
+static s32                               g_dx11_resolution_height = 360;
 static ID3D11Device                     *g_dx11_dev;
 static ID3D11DeviceContext              *g_dx11_dev_cont;
 static ID3D11Texture2D                  *g_dx11_back_buffer_tex;
@@ -61,13 +63,13 @@ static u32                         g_game_sprite_sheet_dims_y;
 typedef struct
 {
   m44 proj;
-  v4f inv_altas_dims;
 } DX11_Game_CBuffer0;
 
 typedef struct
 {
   u32 enable_texture;
-  f32 _pad_0[3];
+  v2f inv_sprite_sheet_dims;
+  f32 _pad_a;
 } DX11_Game_CBuffer1;
 
 static Game_Input g_game_input;
@@ -320,8 +322,8 @@ dx11_create_states(void)
   blend_desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
   
   D3D11_SAMPLER_DESC sam_desc;
-  sam_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
-  //sam_desc.Filter              = D3D11_FILTER_MIN_MAG_POINT_MIP_LINEAR;
+  //sam_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+  sam_desc.Filter              = D3D11_FILTER_MIN_MAG_POINT_MIP_LINEAR;
   //sam_desc.Filter              = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
   //sam_desc.Filter = D3D11_FILTER_MIN_LINEAR_MAG_POINT_MIP_LINEAR;
   //sam_desc.Filter = D3D11_FILTER_ANISOTROPIC;
@@ -417,6 +419,7 @@ static void
 dx11_create_game_textures(void)
 {
   b32 success = false;
+#if 0
   HANDLE file_handle_main_sheet = CreateFileA("..\\res\\sprites\\main-sheet.bmp", GENERIC_READ, FILE_SHARE_READ, 0, 
                                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
 
@@ -484,7 +487,7 @@ dx11_create_game_textures(void)
         .Height              = height,
         .MipLevels           = 1,
         .ArraySize           = 1,
-        .Format              = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+        .Format              = DXGI_FORMAT_B8G8R8A8_UNORM,
         .SampleDesc          = { 1, 0 },
         .Usage               = D3D11_USAGE_IMMUTABLE,
         .BindFlags           = D3D11_BIND_SHADER_RESOURCE,
@@ -515,6 +518,119 @@ dx11_create_game_textures(void)
     
     CloseHandle(file_handle_main_sheet);
   }
+#else
+  // https://learn.microsoft.com/en-us/windows/win32/wic/-wic-api
+  // https://gist.github.com/mmozeiko/1f97a51db53999093ba5759c16c577d4
+  if (SUCCEEDED(CoInitializeEx(0, COINIT_APARTMENTTHREADED)))
+  {
+    IWICImagingFactory     *imaging_factory;
+    IWICBitmapDecoder      *bitmap_decoder;
+    IWICBitmapFrameDecode  *bitmap_frame_decode;
+    if (SUCCEEDED(CoCreateInstance(&CLSID_WICImagingFactory, 0, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, &imaging_factory)))
+    {
+      if (SUCCEEDED(IWICImagingFactory_CreateDecoderFromFilename(imaging_factory, L"..\\res\\sprites\\main-sheet.png", 0, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &bitmap_decoder)))
+      {
+        DXGI_FORMAT         dxgi_format = 0;
+        WICPixelFormatGUID  convert_format;
+        WICPixelFormatGUID  format;
+        
+        IWICBitmapDecoder_GetFrame(bitmap_decoder, 0, &bitmap_frame_decode);
+        IWICBitmapFrameDecode_GetPixelFormat(bitmap_frame_decode, &format);
+         
+        b32 premultiplied_alpha = true;
+        
+        if (IsEqualGUID(&format, &GUID_WICPixelFormat32bppBGRA) ||
+            IsEqualGUID(&format, &GUID_WICPixelFormat32bppPBGRA))
+        {
+          dxgi_format = DXGI_FORMAT_B8G8R8A8_UNORM;
+          convert_format  = premultiplied_alpha ? GUID_WICPixelFormat32bppPBGRA : GUID_WICPixelFormat32bppBGRA;
+        }
+        else if (IsEqualGUID(&format, &GUID_WICPixelFormat32bppBGRA) ||
+                 IsEqualGUID(&format, &GUID_WICPixelFormat32bppPBGRA))
+        {
+          dxgi_format     = DXGI_FORMAT_R8G8B8A8_UNORM;
+          convert_format  = premultiplied_alpha ? GUID_WICPixelFormat32bppPRGBA : GUID_WICPixelFormat32bppRGBA;
+        }
+        else
+        {
+          InvalidCodePath();
+        }
+        
+        IWICBitmapSource* bitmap_source;
+        if (IsEqualGUID(&format, &convert_format))
+        {
+        	IWICBitmapFrameDecode_QueryInterface(bitmap_frame_decode, &IID_IWICBitmapSource, (LPVOID*)&bitmap_source);
+        }
+        else
+        {
+        	IWICFormatConverter* converter;
+        	IWICImagingFactory_CreateFormatConverter(imaging_factory, &converter);
+        	IWICFormatConverter_Initialize(converter, (IWICBitmapSource*)bitmap_frame_decode, &convert_format, WICBitmapDitherTypeNone, 0, 0, WICBitmapPaletteTypeCustom);
+        	IWICFormatConverter_QueryInterface(converter, &IID_IWICBitmapSource, (LPVOID*)&bitmap_source);
+        	IWICFormatConverter_Release(converter);
+        }
+        
+        IWICBitmap* bitmap;
+        IWICImagingFactory_CreateBitmapFromSource(imaging_factory, bitmap_source, WICBitmapCacheOnDemand, &bitmap);
+        
+        UINT bitmap_width, bitmap_height;
+        IWICBitmapSource_GetSize(bitmap_source, &bitmap_width, &bitmap_height);
+        
+        IWICBitmapLock* bitmap_lock;
+        IWICBitmap_Lock(bitmap, 0, WICBitmapLockRead, &bitmap_lock);
+        
+        UINT data_size;
+        BYTE* data_ptr;
+        IWICBitmapLock_GetDataPointer(bitmap_lock, &data_size, &data_ptr);
+        
+        UINT data_stride;
+        IWICBitmapLock_GetStride(bitmap_lock, &data_stride);    
+    		
+        D3D11_TEXTURE2D_DESC tex_desc = 
+        {
+          .Width               = bitmap_width,
+          .Height              = bitmap_height,
+          .MipLevels           = 1,
+          .ArraySize           = 1,
+          .Format              = dxgi_format,
+          .SampleDesc          = { 1, 0 },
+          .Usage               = D3D11_USAGE_IMMUTABLE,
+          .BindFlags           = D3D11_BIND_SHADER_RESOURCE,
+          .CPUAccessFlags      = 0,
+          .MiscFlags           = 0,
+        };
+        
+        D3D11_SUBRESOURCE_DATA tex_data =
+        {
+          .pSysMem           = data_ptr,
+          .SysMemPitch       = data_stride,
+          .SysMemSlicePitch  = 0
+        };
+        
+        if (SUCCEEDED(ID3D11Device_CreateTexture2D(g_dx11_dev, &tex_desc, &tex_data, &g_game_sprite_sheet_diffuse)))
+        {
+          if (SUCCEEDED(ID3D11Device_CreateShaderResourceView(g_dx11_dev, (ID3D11Resource *)g_game_sprite_sheet_diffuse, 0, &g_game_sprite_sheet_diffuse_srv)))
+          {
+            success                    = true;
+            g_game_sprite_sheet_dims_x = bitmap_width;
+            g_game_sprite_sheet_dims_y = bitmap_height;
+          }
+        }
+        
+        IWICBitmapLock_Release(bitmap_lock);
+        IWICBitmap_Release(bitmap);
+        IWICBitmapSource_Release(bitmap_source);
+        IWICBitmapFrameDecode_Release(bitmap_frame_decode);
+        IWICBitmapDecoder_Release(bitmap_decoder);
+        
+      }
+      IWICImagingFactory_Release(imaging_factory);
+    }
+    
+    CoUninitialize();
+  }
+  
+#endif
   
   if (!success)
   {
@@ -570,12 +686,9 @@ dx11_create_game_shaders(void)
       
       f32 half_reso_x                    = (f32)g_dx11_resolution_width * 0.5f;
       f32 half_reso_y                    = (f32)g_dx11_resolution_height * 0.5f;
-      f32 one_over_sprite_sheet_width    = 1.0f / (f32)g_game_sprite_sheet_dims_x;
-      f32 one_over_sprite_sheet_height   = 1.0f / (f32)g_game_sprite_sheet_dims_y;
       DX11_Game_CBuffer0 new_cbuf0 =
       {
-        .proj           = m44_make_ortho_z01(-half_reso_x, half_reso_x, half_reso_y, -half_reso_y, 0.0f, 50.0f),
-        .inv_altas_dims = (v4f){ one_over_sprite_sheet_width, one_over_sprite_sheet_height, 0.0f, 0.0f }
+        .proj = m44_make_ortho_z01(-half_reso_x, half_reso_x, half_reso_y, -half_reso_y, 0.0f, 50.0f),
       };
       
       D3D11_SUBRESOURCE_DATA new_cbuf0_data =
@@ -586,8 +699,22 @@ dx11_create_game_shaders(void)
       
       if (SUCCEEDED(ID3D11Device1_CreateBuffer(g_dx11_dev, &cbuf_desc, &new_cbuf0_data, &g_dx11_game_cbuffer0)))
       {
+        f32 one_over_sprite_sheet_width    = 1.0f / (f32)g_game_sprite_sheet_dims_x;
+        f32 one_over_sprite_sheet_height   = 1.0f / (f32)g_game_sprite_sheet_dims_y;
+        DX11_Game_CBuffer1 new_cbuf1 =
+        {
+          .enable_texture        = 0,
+          .inv_sprite_sheet_dims = (v2f){ one_over_sprite_sheet_width, one_over_sprite_sheet_height }
+        };
+        
+        D3D11_SUBRESOURCE_DATA new_cbuf1_data =
+        {
+          .pSysMem = &new_cbuf1,
+          .SysMemPitch = sizeof(DX11_Game_CBuffer1),
+        };
+        
         cbuf_desc.ByteWidth           = sizeof(DX11_Game_CBuffer1);
-        if (SUCCEEDED(ID3D11Device1_CreateBuffer(g_dx11_dev, &cbuf_desc, 0, &g_dx11_game_cbuffer1)))
+        if (SUCCEEDED(ID3D11Device1_CreateBuffer(g_dx11_dev, &cbuf_desc, &new_cbuf1_data, &g_dx11_game_cbuffer1)))
         {
           D3D11_BUFFER_DESC sbuffer_desc =
           {
@@ -782,17 +909,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         
         // buffer mapping
         D3D11_MAPPED_SUBRESOURCE mapped_subresource;
-        {          
-          ID3D11DeviceContext_Map(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_cbuffer1, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_subresource);
-          DX11_Game_CBuffer1 new_cbuf1 =
-          {
-            .enable_texture = 0
-          };
-          
-          CopyMemory(mapped_subresource.pData, &new_cbuf1, sizeof(new_cbuf1));
-          ID3D11DeviceContext_Unmap(g_dx11_dev_cont, (ID3D11Resource *)g_dx11_game_cbuffer1, 0);
-        }
-
         {        
           ID3D11DeviceContext_IASetPrimitiveTopology(g_dx11_dev_cont, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
         }

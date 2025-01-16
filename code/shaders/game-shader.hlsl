@@ -1,13 +1,12 @@
 cbuffer ConstantStore0 : register(b0)
 {
   float4x4 proj;
-  float4   inv_sprite_sheet_dims;
 };
 
 cbuffer ConstantStore1 : register(b1)
 {
   uint   enable_texture;
-  float  _pad[3];
+  float3 inv_sprite_sheet_dims;
 };
 
 struct Quad_Instance
@@ -55,22 +54,21 @@ vs_main(uint iid : SV_InstanceID, uint vid : SV_VertexID)
   
   if (vid == 0)
   {
-    result.uv = instances.atlas_p;
+    result.uv = float2(instances.atlas_p.x, instances.atlas_p.y + instances.atlas_dims.y);
   }
   else if (vid == 1)
   {
-    result.uv = float2(instances.atlas_p.x, instances.atlas_p.y + instances.atlas_dims.y);
+    result.uv = instances.atlas_p;
   }
   else if (vid == 2)
   {
-    result.uv = float2(instances.atlas_p.x + instances.atlas_dims.x, instances.atlas_p.y);
+    result.uv = instances.atlas_p + instances.atlas_dims;
   }
   else
   {
-    result.uv = instances.atlas_p + instances.atlas_dims;
+    result.uv = float2(instances.atlas_p.x + instances.atlas_dims.x, instances.atlas_p.y);
   }
   
-  result.uv *= inv_sprite_sheet_dims.xy;
   result.tex_on_me = instances.tex_on_me;
   return(result);
 }
@@ -88,7 +86,8 @@ ps_main(VertexShader_Output inp) : SV_Target
   
   if (inp.tex_on_me)
   {
-    float4 texel  = g_sprite_sheet_diffuse.Sample(g_sampler, inp.uv);
+    float2 uv     = (floor(inp.uv) + min(frac(inp.uv) / fwidth(inp.uv), 1.0f) - 0.5f) * inv_sprite_sheet_dims.xy;
+    float4 texel  = linear_to_srgb(g_sprite_sheet_diffuse.Sample(g_sampler, uv));
     sample *= texel;
   }
   
